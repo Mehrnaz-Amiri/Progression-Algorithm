@@ -1,0 +1,315 @@
+
+# ##################### PROGRESSION ALGORITHM #####################
+
+# In[2]:
+
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import statsmodels.formula.api as sm
+import statsmodels.api as sm
+from numpy.random import randn
+from numpy.random import seed
+from scipy.stats import pearsonr
+import snowflake.connector
+import nbconvert
+from IPython.display import Markdown as md
+import warnings
+warnings.filterwarnings('ignore')
+pd.set_option('display.max_rows', 1500)
+import datetime
+from dateutil.relativedelta import relativedelta
+from dateutil.rrule import *
+from datetime import date
+import datetime as DT
+import dateutil.relativedelta as REL
+import math
+
+
+# In[3]:
+
+
+# Connecting to Snowfalke
+cnn = snowflake.connector.connect(user='',
+                 password='',
+                 account='',
+                 warehouse='',
+                 role = "",)
+cs = cnn.cursor()
+
+
+# In[4]:
+
+
+################################## Using Activity tables to define scores ######################################
+
+### Part1: Creating TARGET_PERFORMANCE_DAILY table ###
+
+# EMAIL_SCORE_INCREMENTAL
+sql_email = 'SELECT * FROM "ELV_NEURELIS"."NRL_VCO_HCP"."ACTIVITY_NPP_EMAIL"'
+cs.execute(sql_email)
+npp_email = cs.fetch_pandas_all()
+npp_email['REPORTING_DAY'] = npp_email['ACTIVITY_DATE'].dt.date
+npp_email['DIST_WEIGHT'] = npp_email.groupby(['REPORTING_DAY','FP_CUST_ID','ASSET_ID'], dropna=False).ACTIVITY_WEIGHT.transform(np.max)
+npp_email['ROW_NUMBER_WEIGHT'] = npp_email.sort_values(['ACTIVITY_ID'], ascending=True).groupby(['REPORTING_DAY','FP_CUST_ID','ASSET_ID'], dropna=False).cumcount()+1
+npp_email_weight_agg = npp_email
+npp_email_weight_agg = npp_email_weight_agg[(npp_email_weight_agg['ROW_NUMBER_WEIGHT'] == 1)]
+npp_email_weight_agg['WEIGHT'] = npp_email_weight_agg.sort_values(by='REPORTING_DAY').groupby(['FP_CUST_ID','REPORTING_DAY'], dropna=False).DIST_WEIGHT.transform(np.sum)
+npp_email_weight_agg = npp_email_weight_agg.drop_duplicates(['FP_CUST_ID','REPORTING_DAY'])
+npp_email_weight_agg['WEIGHT'] = npp_email_weight_agg.sort_values(by='REPORTING_DAY').groupby(['FP_CUST_ID','REPORTING_DAY'], dropna=False)['WEIGHT'].cumsum()
+npp_email_weight_agg = npp_email_weight_agg[['FP_CUST_ID','WEIGHT','REPORTING_DAY']]
+npp_email_weight_fin = npp_email_weight_agg
+npp_email_weight_fin['MAX_WEIGHT'] = npp_email_weight_fin.groupby(['FP_CUST_ID','REPORTING_DAY'], dropna=False)['WEIGHT'].transform('max') 
+target_npp_email_daily = npp_email_weight_fin.fillna(0)
+target_npp_email_daily['EMAIL_SCORE_INCREMENTAL'] = target_npp_email_daily.MAX_WEIGHT.astype(int)
+npp_email = target_npp_email_daily[['FP_CUST_ID','REPORTING_DAY','EMAIL_SCORE_INCREMENTAL']] #1,265,169
+
+# WEB_SCORE_INCREMENTAL
+sql_web = 'SELECT * FROM "ELV_NEURELIS"."NRL_VCO_HCP"."ACTIVITY_NPP_WEB"'
+cs.execute(sql_web)
+npp_web = cs.fetch_pandas_all()
+npp_web['REPORTING_DAY'] = npp_web['ACTIVITY_DATE'].dt.date
+npp_web['DIST_WEIGHT'] = npp_web.groupby(['REPORTING_DAY','FP_CUST_ID','ASSET_ID'], dropna=False).ACTIVITY_WEIGHT.transform(np.max)
+npp_web['ROW_NUMBER_WEIGHT'] = npp_web.sort_values(['ACTIVITY_ID'], ascending=True).groupby(['REPORTING_DAY','FP_CUST_ID','ASSET_ID'], dropna=False).cumcount()+1
+npp_web_weight_agg = npp_web
+npp_web_weight_agg = npp_web_weight_agg[(npp_web_weight_agg['ROW_NUMBER_WEIGHT'] == 1)]
+npp_web_weight_agg['WEIGHT'] = npp_web_weight_agg.sort_values(by='REPORTING_DAY').groupby(['FP_CUST_ID','REPORTING_DAY'], dropna=False).DIST_WEIGHT.transform(np.sum)
+npp_web_weight_agg = npp_web_weight_agg.drop_duplicates(['FP_CUST_ID','REPORTING_DAY'])
+npp_web_weight_agg['WEIGHT'] = npp_web_weight_agg.sort_values(by='REPORTING_DAY').groupby(['FP_CUST_ID','REPORTING_DAY'], dropna=False)['WEIGHT'].cumsum()
+npp_web_weight_agg = npp_web_weight_agg[['FP_CUST_ID','WEIGHT','REPORTING_DAY']]
+npp_web_weight_fin = npp_web_weight_agg
+npp_web_weight_fin['MAX_WEIGHT'] = npp_web_weight_fin.groupby(['FP_CUST_ID','REPORTING_DAY'], dropna=False)['WEIGHT'].transform('max') 
+target_npp_web_daily = npp_web_weight_fin.fillna(0)
+target_npp_web_daily['WEB_SCORE_INCREMENTAL'] = target_npp_web_daily.MAX_WEIGHT.astype(int)
+npp_web = target_npp_web_daily[['FP_CUST_ID','REPORTING_DAY','WEB_SCORE_INCREMENTAL']]  #12,372
+
+# MEDIA_SCORE_INCREMENTAL
+sql_media = 'SELECT * FROM "ELV_NEURELIS"."NRL_VCO_HCP"."ACTIVITY_NPP_MEDIA"'
+cs.execute(sql_media)
+npp_media = cs.fetch_pandas_all()
+npp_media['REPORTING_DAY'] = npp_media['ACTIVITY_DATE'].dt.date
+npp_media['DIST_WEIGHT'] = npp_media.groupby(['REPORTING_DAY','FP_CUST_ID','ASSET_ID'], dropna=False).ACTIVITY_WEIGHT.transform(np.max)
+npp_media['ROW_NUMBER_WEIGHT'] = npp_media.sort_values(['ACTIVITY_ID'], ascending=True).groupby(['REPORTING_DAY','FP_CUST_ID','ASSET_ID'], dropna=False).cumcount()+1
+npp_media_weight_agg = npp_media
+npp_media_weight_agg = npp_media_weight_agg[(npp_media_weight_agg['ROW_NUMBER_WEIGHT'] == 1)]
+npp_media_weight_agg['WEIGHT'] = npp_media_weight_agg.sort_values(by='REPORTING_DAY').groupby(['FP_CUST_ID','REPORTING_DAY'], dropna=False).DIST_WEIGHT.transform(np.sum)
+npp_media_weight_agg = npp_media_weight_agg.drop_duplicates(['FP_CUST_ID','REPORTING_DAY'])
+npp_media_weight_agg['WEIGHT'] = npp_media_weight_agg.sort_values(by='REPORTING_DAY').groupby(['FP_CUST_ID','REPORTING_DAY'], dropna=False)['WEIGHT'].cumsum()
+npp_media_weight_agg = npp_media_weight_agg[['FP_CUST_ID','WEIGHT','REPORTING_DAY']]
+npp_media_weight_fin = npp_media_weight_agg
+npp_media_weight_fin['MAX_WEIGHT'] = npp_media_weight_fin.groupby(['FP_CUST_ID','REPORTING_DAY'], dropna=False)['WEIGHT'].transform('max') 
+target_npp_media_daily = npp_media_weight_fin.fillna(0)
+target_npp_media_daily['MEDIA_SCORE_INCREMENTAL'] = target_npp_media_daily.MAX_WEIGHT.astype(int)
+npp_media = target_npp_media_daily[['FP_CUST_ID','REPORTING_DAY','MEDIA_SCORE_INCREMENTAL']] #132,731
+
+# TRX_SCORE_INCREMENTAL
+sql_rx = 'SELECT * FROM "ELV_NEURELIS"."NRL_VCO_HCP"."ACTIVITY_RX_SALES"'
+cs.execute(sql_rx)
+rx_saless = cs.fetch_pandas_all()
+sql_score_rx = 'SELECT * FROM "ELV_NEURELIS"."NRL_VCO_HCP_STAGE"."CONFIG_CAMPAIGN_SCORING_RX"'
+cs.execute(sql_score_rx)
+campaign_score_rx = cs.fetch_pandas_all()
+TRX_WEIGHT = campaign_score_rx["TRX_WEIGHT"].astype(int)
+TRX_WEIGHT = 100
+rx_saless["REPORTING_WEEK"] = rx_saless["DATE_ID_WEEK"]
+rx_sales = rx_saless.assign(TRX_CNT = np.where(rx_saless["PRODUCT_CATEGORY"] == 'Brand',rx_saless["TRX_CNT"],0)).groupby(["FP_CUST_ID","REPORTING_WEEK"],as_index=False).agg({'TRX_CNT':sum})
+rx_sales["TRX_CNT"] = round(rx_sales["TRX_CNT"])
+rx_sales["TRX_CNT"] = rx_sales["TRX_CNT"].astype(int)
+rx_sales['TRX_SCORE_INCREMENTAL'] = rx_sales.groupby(['FP_CUST_ID',"REPORTING_WEEK"]).TRX_CNT.transform('sum') * TRX_WEIGHT
+rx_sales = rx_sales[['FP_CUST_ID','REPORTING_WEEK','TRX_SCORE_INCREMENTAL']] #524,162
+
+# REP_SCORE_INCREMENTAL
+sql_rep = 'SELECT * FROM "ELV_NEURELIS"."NRL_VCO_HCP"."ACTIVITY_REP_CALL"'
+cs.execute(sql_rep)
+rep_call = cs.fetch_pandas_all()
+rep_call['REPORTING_DAY'] = rep_call['CALL_DATETIME'].dt.date
+rep_call['WEIGHT'] = rep_call.sort_values(by='REPORTING_DAY').groupby(['FP_CUST_ID','REPORTING_DAY'], dropna=False)['ACTIVITY_WEIGHT'].cumsum()
+rep_call = rep_call[['FP_CUST_ID','WEIGHT','REPORTING_DAY']]
+rep_call['MAX_WEIGHT'] = rep_call.groupby(['FP_CUST_ID','REPORTING_DAY'],dropna=False)['WEIGHT'].transform('max')
+rep_call = rep_call.groupby(['FP_CUST_ID','REPORTING_DAY'],as_index=False)['MAX_WEIGHT'].max()
+target_rep_call_daily = rep_call.fillna(0)
+target_rep_call_daily['REP_SCORE_INCREMENTAL'] = target_rep_call_daily.MAX_WEIGHT.astype(int)
+rep_call = target_rep_call_daily[['FP_CUST_ID','REPORTING_DAY','REP_SCORE_INCREMENTAL']] #416,158
+
+
+# In[ ]:
+
+
+### Part2: Creating TARGET_PERFORMANCE_DAILY table ###
+# Cross Joining 'date_union' and 'audience_all' then Left Joining with target tables (scores)
+
+sql_date = 'SELECT date_day as REPORTING_DAY FROM "ELV_NEURELIS"."NRL_VCO_HCP_STAGE"."STAGE_CALENDAR" WHERE DATE_DAY <= CURRENT_DATE()'
+cs.execute(sql_date)
+date_union = cs.fetch_pandas_all()
+sql_audience = 'SELECT FP_CUST_ID FROM "ELV_NEURELIS"."NRL_VCO_HCP_STAGE"."STAGE_CUSTOMER_SOURCE_ALL"'
+cs.execute(sql_audience)
+audience_all = cs.fetch_pandas_all()
+## Cross Joining between STAGE_CALENDAR and STAGE_CUSTOMER_SOURCE_ALL
+date_audience = date_union.merge(audience_all, how = "cross") 
+date_audience = date_audience[date_audience['FP_CUST_ID'].str.len() > 0]
+
+## Creating reporting week and reporting month columns
+date_audience['REPORTING_WEEK'] = date_audience["REPORTING_DAY"] + relativedelta(weekday=FR)
+date_audience["REPORTING_DAY"] = pd.to_datetime(date_audience["REPORTING_DAY"])
+date_audience["YEAR"] = date_audience['REPORTING_DAY'].dt.year 
+date_audience["MONTH"] = date_audience['REPORTING_DAY'].dt.month
+date_audience['REPORTING_MONTH'] = pd.to_datetime(date_audience[['YEAR', 'MONTH']].assign(DAY=1))
+date_audience = date_audience[['FP_CUST_ID','REPORTING_DAY','REPORTING_WEEK','REPORTING_MONTH']]
+## Removing duplicates
+date_audience = date_audience.drop_duplicates(['FP_CUST_ID','REPORTING_DAY','REPORTING_WEEK','REPORTING_MONTH'], keep='last')# 204,800,800
+
+# To run code faster you can use subset of data, 10,000 FP CUST IDs, but I used entire dataset
+#date_audience = date_audience.sort_values('FP_CUST_ID')
+#date_audience = date_audience.head(14,620,000) #10,000 FP CUST ID, 10000*1462=14,620,000
+
+# Converting dates to 'date' type since reporting_day is date type in the date_audience table
+npp_email["REPORTING_DAY"] = pd.to_datetime(npp_email["REPORTING_DAY"])
+npp_web["REPORTING_DAY"] = pd.to_datetime(npp_web["REPORTING_DAY"])
+npp_media["REPORTING_DAY"] = pd.to_datetime(npp_media["REPORTING_DAY"])
+rx_sales["REPORTING_WEEK"] = pd.to_datetime(rx_sales["REPORTING_WEEK"])
+rep_call["REPORTING_DAY"] = pd.to_datetime(rep_call["REPORTING_DAY"])
+date_audience["REPORTING_WEEK"] = pd.to_datetime(date_audience["REPORTING_WEEK"])
+
+table1 = pd.merge(date_audience, npp_email, how='left', left_on=['FP_CUST_ID','REPORTING_DAY'], right_on = ['FP_CUST_ID','REPORTING_DAY'])
+table2 = pd.merge(table1, npp_web, how='left', left_on=['FP_CUST_ID','REPORTING_DAY'], right_on = ['FP_CUST_ID','REPORTING_DAY'])
+table3 = pd.merge(table2, npp_media, how='left', left_on=['FP_CUST_ID','REPORTING_DAY'], right_on = ['FP_CUST_ID','REPORTING_DAY'])
+table3["REPORTING_WEEK"] = pd.to_datetime(table3["REPORTING_WEEK"])
+table4 = pd.merge(table3, rx_sales, how='left', left_on=['FP_CUST_ID','REPORTING_WEEK'], right_on = ['FP_CUST_ID','REPORTING_WEEK'])
+table5 = pd.merge(table4, rep_call, how='left', left_on=['FP_CUST_ID','REPORTING_DAY'], right_on = ['FP_CUST_ID','REPORTING_DAY'])
+
+# Removing NULL FP_CUST_IDs and replacing NA values in numeric columns with 0
+performance = table5[table5['FP_CUST_ID'].str.len() > 0]
+numeric_columns = performance.select_dtypes(include=['number']).columns
+performance[numeric_columns] = performance[numeric_columns].fillna(0)
+# Maximum of all scores per FP_CUST_ID and Reporting_Day
+performance['EMAIL_SCORE_INCREMENTAL'] = performance.groupby(['FP_CUST_ID','REPORTING_DAY'])['EMAIL_SCORE_INCREMENTAL'].transform('max')
+performance['WEB_SCORE_INCREMENTAL'] = performance.groupby(['FP_CUST_ID','REPORTING_DAY'])['WEB_SCORE_INCREMENTAL'].transform('max')
+performance['MEDIA_SCORE_INCREMENTAL'] = performance.groupby(['FP_CUST_ID','REPORTING_DAY'])['MEDIA_SCORE_INCREMENTAL'].transform('max')
+performance['REP_SCORE_INCREMENTAL'] = performance.groupby(['FP_CUST_ID','REPORTING_DAY'])['REP_SCORE_INCREMENTAL'].transform('max')
+performance['TRX_SCORE_INCREMENTAL'] = performance.groupby(['FP_CUST_ID','REPORTING_DAY'])['TRX_SCORE_INCREMENTAL'].transform('max')
+performance # 204,800,800 rows
+
+
+# In[ ]:
+
+
+####### Using TARGET_PERFORMANCE_DAILY to create ELEVALT_SCORES_DAILY #######
+performance_daily = performance #202,506,600
+performance_daily['TRX_SCORE'] = performance_daily.sort_values(by='REPORTING_DAY').groupby(['FP_CUST_ID'])['TRX_SCORE_INCREMENTAL'].cumsum()
+performance_daily['REP_SCORE'] = performance_daily.sort_values(by='REPORTING_DAY').groupby(['FP_CUST_ID'])['REP_SCORE_INCREMENTAL'].cumsum()
+performance_daily['EMAIL_SCORE'] = performance_daily.sort_values(by='REPORTING_DAY').groupby(['FP_CUST_ID'])['EMAIL_SCORE_INCREMENTAL'].cumsum()
+performance_daily['WEB_SCORE'] = performance_daily.sort_values(by='REPORTING_DAY').groupby(['FP_CUST_ID'])['WEB_SCORE_INCREMENTAL'].cumsum()
+performance_daily['MEDIA_SCORE'] = performance_daily.sort_values(by='REPORTING_DAY').groupby(['FP_CUST_ID'])['MEDIA_SCORE_INCREMENTAL'].cumsum()
+performance_daily['NPP_SCORE'] = performance_daily['WEB_SCORE'] + performance_daily['EMAIL_SCORE'] + performance_daily['MEDIA_SCORE']
+performance_daily['ENGAGEMENT_SCORE'] = performance_daily['REP_SCORE'] + performance_daily['NPP_SCORE']
+performance_daily['COMPOSITE_SCORE'] = performance_daily['TRX_SCORE'] + performance_daily['ENGAGEMENT_SCORE']
+performance_daily.sort_values(by=['FP_CUST_ID'], ascending=True)
+performance_daily.sort_values(by=['REPORTING_DAY'], ascending=False)
+ELEVALT_SCORES_DAILY = performance_daily[['REPORTING_DAY','REPORTING_WEEK','REPORTING_MONTH','FP_CUST_ID','TRX_SCORE','REP_SCORE','EMAIL_SCORE','WEB_SCORE','MEDIA_SCORE','NPP_SCORE','ENGAGEMENT_SCORE','COMPOSITE_SCORE']]
+ELEVALT_SCORES_DAILY # Finally, it should have 202,995,776 rows
+
+
+# In[76]:
+
+
+### Using ELEVALT_SCORES_DAILY to create ELEVALT_PROGRESSION_DAILY ###
+sql2 = 'SELECT FP_CUST_ID FROM "ELV_NEURELIS"."NRL_VCO_HCP_STAGE"."STAGE_CUSTOMER_SOURCE_ALL"'
+cs.execute(sql2)
+audience_all = cs.fetch_pandas_all()
+# Removed duplicted FP CUST ID to keep the data smaller
+audience_all2 = audience_all.drop_duplicates('FP_CUST_ID')
+
+sql3 = 'SELECT REPORTING_DAY,FP_CUST_ID,DATE_FIRST_BRAND_RX,DATE_LAST_BRAND_RX FROM "ELV_NEURELIS"."NRL_VCO_HCP"."TARGET_ATTRIBUTES_HTD_DAILY"'
+cs.execute(sql3)
+dimension_htd = cs.fetch_pandas_all()
+# Subset of data, 300 FP CUST ID
+dimension_htd2 = dimension_htd.sort_values('FP_CUST_ID')
+dimension_htd2 = dimension_htd2.head(438600) #300 FP CUST ID, 300*1462=438,600
+
+sql4 = 'SELECT *,COALESCE(LEAD(score_threshold) OVER (ORDER BY SCORE_THRESHOLD), 100000) AS next_score FROM "ELV_NEURELIS"."NRL_VCO_HCP_STAGE"."CONFIG_CAMPAIGN_STAGE"'
+cs.execute(sql4)
+campaign_stage = cs.fetch_pandas_all()
+
+sql5 = 'SELECT * FROM "ELV_NEURELIS"."NRL_VCO_HCP_STAGE"."CONFIG_CAMPAIGN_SCORING_RX"'
+cs.execute(sql5)
+campaign_score = cs.fetch_pandas_all()
+
+# Using "ELEVALT_SCORES_DAILY" table that is created in the previous step (Substet of data because it hasn't joined yet by STAGE_CUSTOMER_SOURCE_ALL and STAGE_CALENDAR)
+scores_daily = ELEVALT_SCORES_DAILY[['REPORTING_DAY','FP_CUST_ID','COMPOSITE_SCORE']]
+
+sql6 = 'SELECT STAGE_LABEL FROM "ELV_NEURELIS"."NRL_VCO_HCP_STAGE"."CONFIG_CAMPAIGN_STAGE" ORDER BY SCORE_THRESHOLD LIMIT 1'
+cs.execute(sql6)
+default_stage = cs.fetch_pandas_all()
+default_stage.rename(columns = {'STAGE_LABEL':'DEFAULT_STAGE'}, inplace = True)
+
+sql7 = 'SELECT * FROM "ELV_NEURELIS"."NRL_VCO_HCP_STAGE"."STAGE_CALENDAR" WHERE DATE_DAY <= CURRENT_DATE()'
+cs.execute(sql7)
+date_union = cs.fetch_pandas_all()
+
+
+# In[67]:
+
+
+elevalt_progression = date_union
+elevalt_progression['REPORTING_DAY'] = date_union['DATE_DAY']
+elevalt_progression['REPORTING_WEEK'] = date_union["DATE_DAY"] + relativedelta(weekday=FR)
+
+date_union["DATE_DAY"] = pd.to_datetime(date_union["DATE_DAY"])
+date_union["YEAR"] = date_union['DATE_DAY'].dt.year 
+date_union["MONTH"] = date_union['DATE_DAY'].dt.month
+elevalt_progression['REPORTING_MONTH'] = pd.to_datetime(date_union[['YEAR', 'MONTH']].assign(DAY=1))
+# "period_complete" should be checked (we can remove it since we don't need it as part of progression algorithm)
+elevalt_progression['PERIOD_COMPLETE'] = np.where((pd.to_datetime("now") - date_union["DATE_DAY"]).dt.days < 7, False, True)
+elevalt_progression = elevalt_progression[['REPORTING_DAY','REPORTING_WEEK','REPORTING_MONTH','PERIOD_COMPLETE']]
+
+elevalt_progression1 = elevalt_progression.merge(audience_all2, how = "cross") 
+elevalt_progression2 = elevalt_progression1.merge(campaign_score, how = "cross") 
+elevalt_progression3 = elevalt_progression2.merge(default_stage, how = "cross") #414,017,932 #now is 234,843,984 # reduce to 438,600 (300 FP IDs)
+elevalt_progression3_1 = elevalt_progression3.sort_values('FP_CUST_ID')
+elevalt_progression3_1 = elevalt_progression3_1.head(438600) #300 FP CUST ID, 300*1462=438,600
+elevalt_progression_d = pd.merge(elevalt_progression3_1, dimension_htd2, how = 'left', on = ['FP_CUST_ID','REPORTING_DAY'])
+elevalt_progression_s = pd.merge(elevalt_progression_d, scores_daily, how = 'left', on = ['FP_CUST_ID','REPORTING_DAY'])
+elevalt_progression_stage = elevalt_progression_s.merge(campaign_stage, how = "cross")
+elevalt_progression_stage = elevalt_progression_stage[(elevalt_progression_stage.COMPOSITE_SCORE >= elevalt_progression_stage.SCORE_THRESHOLD) & (elevalt_progression_stage.COMPOSITE_SCORE < elevalt_progression_stage.NEXT_SCORE)]
+elevalt_progression = elevalt_progression_stage[elevalt_progression_stage['FP_CUST_ID'].str.len() > 0]
+
+
+# In[73]:
+
+
+elevalt_progression['ELEVALT_STAGE'] = elevalt_progression.sort_values(by=['REPORTING_DAY'], ascending=True).groupby('FP_CUST_ID')['STAGE_LABEL'].shift().fillna('')
+elevalt_progression['DATE_FIRST_BRAND_RX'] = elevalt_progression.sort_values(by=['REPORTING_DAY'], ascending=True).groupby('FP_CUST_ID')['DATE_FIRST_BRAND_RX'].shift().fillna('')
+elevalt_progression['DATE_LAST_BRAND_RX'] = elevalt_progression.sort_values(by=['REPORTING_DAY'], ascending=True).groupby('FP_CUST_ID')['DATE_LAST_BRAND_RX'].shift().fillna('')
+elevalt_progression2 = elevalt_progression[['FP_CUST_ID','REPORTING_DAY','REPORTING_WEEK','REPORTING_MONTH','PERIOD_COMPLETE','COMPOSITE_SCORE','ELEVALT_STAGE','DATE_FIRST_BRAND_RX','DATE_LAST_BRAND_RX']]
+elevalt_progression2[["DATE_LAST_BRAND_RX", "REPORTING_DAY"]] = elevalt_progression2[["DATE_LAST_BRAND_RX", "REPORTING_DAY"]].apply(pd.to_datetime)
+lapsed_days = campaign_score["LAPSED_DAYS"].astype(int)
+lapsed_days = 91
+elevalt_progression2["ELEVALT_IS_LAPSED"] = np.where((elevalt_progression2["DATE_LAST_BRAND_RX"] - elevalt_progression2["REPORTING_DAY"]).dt.days >= lapsed_days, True, False)
+elevalt_progression2
+
+
+# In[12]:
+
+
+d2 = performance.sort_values(by='REPORTING_DAY')[(performance['FP_CUST_ID'] == '00027bc55444f32dd3041640dd7fd646')]
+d2
+
+
+# In[ ]:
+
+
+#### Personal Codes to QC results ####
+#m = npp_email2.loc[~npp_email2['FP_CUST_ID'].isin(target_npp_email_daily['FP_CUST_ID'])].copy()
+#m2 = target_npp_email_daily.loc[~target_npp_email_daily['FP_CUST_ID'].isin(npp_email2['FP_CUST_ID'])].copy()
+#d2 = table5.sort_values(by='REPORTING_WEEK')[(table5['FP_CUST_ID'] == '00027bc55444f32dd3041640dd7fd646')]
+#d2["REP_SCORE_INCREMENTAL"].sum()
+
+#rx_saless[["DATE_ID","DATE_ID_WEEK"]]
+#k = rx_saless.loc[~rx_saless['DATE_ID'].isin(rx_saless['DATE_ID_WEEK'])].copy()
+#k[['FP_CUST_ID',"DATE_ID","DATE_ID_WEEK"]]
+
+#d2 = ELEVALT_SCORES_DAILY.sort_values(by='REPORTING_DAY')[(ELEVALT_SCORES_DAILY['FP_CUST_ID'] == '82c2e8059ba99f89b1766b916783f404')]
+#d2["REP_SCORE_INCREMENTAL"].sum()
+#d2.describe()
+
